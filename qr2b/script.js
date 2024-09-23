@@ -86,6 +86,8 @@ function processQRCode(data) {
             if (!chunks[chunkIndex]) {
                 chunks[chunkIndex] = jsonData.data;
                 updateProgress();
+                // Display current chunk and total chunks along with filename
+                statusMessage.textContent = `File: ${fileInfo ? fileInfo.filename : 'Unknown'}, Chunk: ${chunkIndex}/${totalChunks}`;
                 if (Object.keys(chunks).length === totalChunks) {
                     assembleFile();
                 }
