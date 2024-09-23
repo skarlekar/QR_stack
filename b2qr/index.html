@@ -16,6 +16,18 @@
             <button id="stopBtn" disabled>Stop</button>
             <button id="resetBtn" disabled>Reset</button>
         </div>
+        <div class="sliders">
+            <div class="speed-control">
+                <label for="speedSlider">Display Speed:</label>
+                <input type="range" id="speedSlider" min="-5" max="5" value="0" step="1">
+                <span id="speedValue">Normal</span>
+            </div>
+            <div class="chunk-size-control">
+                <label for="chunkSizeSlider">Chunk Size:</label>
+                <input type="range" id="chunkSizeSlider" min="30" max="120" value="60" step="10">
+                <span id="chunkSizeValue">60 bytes</span>
+            </div>
+        </div>
         <div id="progressBar" class="progress-bar">
             <div class="progress"></div>
         </div>

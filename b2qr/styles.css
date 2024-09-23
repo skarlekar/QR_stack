@@ -74,3 +74,16 @@ button:disabled {
     font-weight: bold;
     color: #333;
 }
+
+.sliders {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.speed-control,
+.chunk-size-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
