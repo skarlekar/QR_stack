@@ -90,3 +90,26 @@ button:disabled {
     font-weight: bold;
     color: #4CAF50;
 }
+
+#segmentedProgressBar {
+    display: flex;
+    justify-content: space-between;
+    margin: 20px 0;
+    height: 20px;
+}
+
+.segment {
+    flex-grow: 1;
+    margin: 0 1px;
+    background-color: #ff6b6b;
+    transition: background-color 0.3s ease;
+    min-width: 5px; /* Ensure each segment has a minimum width */
+}
+
+.segment.read {
+    background-color: #4CAF50;
+}
+
+.segment.missing {
+    background-color: #ff6b6b;
+}

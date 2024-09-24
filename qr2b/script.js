@@ -10,12 +10,16 @@ const statusMessage = document.getElementById('statusMessage');
 const errorMessage = document.getElementById('errorMessage');
 const missingChunks = document.getElementById('missingChunks');
 const downloadLink = document.getElementById('downloadLink');
+const segmentedProgressBar = document.getElementById('segmentedProgressBar');
 
 // Global variables
 let scanning = false;
 let fileInfo = null;
 let chunks = {};
 let totalChunks = 0;
+let lastReadTime = null;
+let readTimes = [];
+const MAX_READ_TIMES = 10; // Number of recent read times to consider for average
 
 // Event listeners
 startBtn.addEventListener('click', startScanning);
@@ -79,15 +83,34 @@ function processQRCode(data) {
             fileInfo = jsonData;
             totalChunks = parseInt(fileInfo.chunks);
             statusMessage.textContent = `File: ${fileInfo.filename}, Total chunks: ${totalChunks}`;
+            createSegmentedProgressBar(totalChunks);
             updateProgress();
+            lastReadTime = Date.now(); // Initialize lastReadTime
         } else if (jsonData.chunk && jsonData.total_chunks && jsonData.data) {
             // Data chunk QR code
             const chunkIndex = parseInt(jsonData.chunk);
             if (!chunks[chunkIndex]) {
                 chunks[chunkIndex] = jsonData.data;
                 updateProgress();
-                // Display current chunk and total chunks along with filename
-                statusMessage.textContent = `File: ${fileInfo ? fileInfo.filename : 'Unknown'}, Chunk: ${chunkIndex}/${totalChunks}`;
+                updateSegmentedProgressBar(chunkIndex);
+                
+                // Calculate and update read time
+                const currentTime = Date.now();
+                if (lastReadTime) {
+                    const readTime = currentTime - lastReadTime;
+                    readTimes.push(readTime);
+                    if (readTimes.length > MAX_READ_TIMES) {
+                        readTimes.shift(); // Remove oldest read time
+                    }
+                }
+                lastReadTime = currentTime;
+                
+                // Estimate remaining time
+                const remainingTime = estimateRemainingTime();
+                
+                // Display current chunk, total chunks, and estimated time
+                statusMessage.textContent = `File: ${fileInfo ? fileInfo.filename : 'Unknown'}, Chunk: ${chunkIndex}/${totalChunks}, Estimated time: ${remainingTime}`;
+                
                 if (Object.keys(chunks).length === totalChunks) {
                     assembleFile();
                 }
@@ -96,6 +119,48 @@ function processQRCode(data) {
     } catch (err) {
         console.error("Error processing QR code:", err);
         errorMessage.textContent = "Invalid QR code data.";
+    }
+}
+
+// Create segmented progress bar
+function createSegmentedProgressBar(totalSegments) {
+    segmentedProgressBar.innerHTML = '';
+    if (totalSegments > MAX_VISIBLE_SEGMENTS) {
+        segmentSize = Math.ceil(totalSegments / MAX_VISIBLE_SEGMENTS);
+        totalSegments = MAX_VISIBLE_SEGMENTS;
+    } else {
+        segmentSize = 1;
+    }
+    
+    for (let i = 0; i < totalSegments; i++) {
+        const segment = document.createElement('div');
+        segment.className = 'segment';
+        segmentedProgressBar.appendChild(segment);
+    }
+}
+
+// Update segmented progress bar
+function updateSegmentedProgressBar(chunkIndex) {
+    const segmentIndex = Math.floor((chunkIndex - 1) / segmentSize);
+    const segments = segmentedProgressBar.children;
+    if (segments[segmentIndex]) {
+        // Check if all chunks in this segment are present
+        const startChunk = segmentIndex * segmentSize + 1;
+        const endChunk = Math.min((segmentIndex + 1) * segmentSize, totalChunks);
+        let allPresent = true;
+        for (let i = startChunk; i <= endChunk; i++) {
+            if (!chunks[i]) {
+                allPresent = false;
+                break;
+            }
+        }
+        if (allPresent) {
+            segments[segmentIndex].classList.add('read');
+            segments[segmentIndex].classList.remove('missing');
+        } else {
+            segments[segmentIndex].classList.remove('read');
+            segments[segmentIndex].classList.add('missing');
+        }
     }
 }
 
@@ -118,6 +183,10 @@ function assembleFile() {
     if (missingChunkIndices.length > 0) {
         errorMessage.textContent = "Some chunks are missing. Please rescan the missing QR codes.";
         missingChunks.textContent = `Missing chunks: ${missingChunkIndices.join(', ')}`;
+        // Update progress bar to reflect missing chunks
+        for (let i = 1; i <= totalChunks; i++) {
+            updateSegmentedProgressBar(i);
+        }
     } else {
         const base64Data = Object.values(chunks).join('');
         const binaryData = atob(base64Data);
@@ -132,5 +201,25 @@ function assembleFile() {
         downloadLink.style.display = 'block';
         statusMessage.textContent = "File assembly complete. Click the download link to save the file.";
         stopScanning();
+    }
+}
+
+const MAX_VISIBLE_SEGMENTS = 100; // Maximum number of visible segments in the progress bar
+let segmentSize = 1; // Number of chunks represented by each segment
+
+// Add this new function to estimate remaining time
+function estimateRemainingTime() {
+    if (readTimes.length === 0) return "Calculating...";
+    
+    const averageReadTime = readTimes.reduce((a, b) => a + b, 0) / readTimes.length;
+    const remainingChunks = totalChunks - Object.keys(chunks).length;
+    const estimatedSeconds = (remainingChunks * averageReadTime) / 1000;
+    
+    if (estimatedSeconds < 60) {
+        return `${Math.round(estimatedSeconds)} seconds`;
+    } else if (estimatedSeconds < 3600) {
+        return `${Math.round(estimatedSeconds / 60)} minutes`;
+    } else {
+        return `${Math.round(estimatedSeconds / 3600)} hours`;
     }
 }
