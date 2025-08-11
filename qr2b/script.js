@@ -20,6 +20,7 @@ let totalChunks = 0; // Total number of chunks expected
 let lastReadTime = null; // Timestamp of the last successful chunk read
 let readTimes = []; // Array to store recent chunk read times
 const MAX_READ_TIMES = 10; // Number of recent read times to consider for average
+let fileAssembled = false; // Flag to indicate if file has been assembled
 
 // Event listeners for start and stop buttons
 startBtn.addEventListener('click', startScanning);
@@ -28,6 +29,17 @@ stopBtn.addEventListener('click', stopScanning);
 // Function to start camera and QR code scanning
 async function startScanning() {
     try {
+        // Reset state
+        fileAssembled = false;
+        chunks = {};
+        fileInfo = null;
+        totalChunks = 0;
+        lastReadTime = null;
+        readTimes = [];
+        errorMessage.textContent = '';
+        missingChunks.textContent = '';
+        downloadLink.style.display = 'none';
+        
         // Request camera access
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
         video.srcObject = stream;
@@ -67,18 +79,23 @@ function scan() {
             inversionAttempts: "dontInvert",
         });
 
-        if (code) {
-            processQRCode(code.data); // Process the QR code if found
+        if (code && !fileAssembled) {
+            processQRCode(code.data); // Process the QR code if found and file not assembled
         }
     }
-    if (scanning) {
-        requestAnimationFrame(scan); // Continue scanning if not stopped
+    if (scanning && !fileAssembled) {
+        requestAnimationFrame(scan); // Continue scanning if not stopped and file not assembled
     }
 }
 
 // Function to process scanned QR code data
 function processQRCode(data) {
     try {
+        // Don't process if file is already assembled
+        if (fileAssembled) {
+            return;
+        }
+        
         const jsonData = JSON.parse(data);
         if (jsonData.filename && jsonData.chunks) {
             // This is the file info QR code
@@ -93,34 +110,43 @@ function processQRCode(data) {
             const chunkIndex = parseInt(jsonData.chunk);
             if (!chunks[chunkIndex]) {
                 chunks[chunkIndex] = jsonData.data;
+                console.log(`Received chunk ${chunkIndex}/${totalChunks}, data length: ${jsonData.data.length}`);
+                console.log(`Chunk ${chunkIndex} first 50 chars:`, jsonData.data.substring(0, 50));
                 updateProgress();
                 updateSegmentedProgressBar(chunkIndex);
-                
-                // Calculate and update read time
-                const currentTime = Date.now();
-                if (lastReadTime) {
-                    const readTime = currentTime - lastReadTime;
-                    readTimes.push(readTime);
-                    if (readTimes.length > MAX_READ_TIMES) {
-                        readTimes.shift(); // Remove oldest read time
-                    }
+            } else {
+                console.log(`Duplicate chunk ${chunkIndex} received, ignoring`);
+            }
+            
+            // Calculate and update read time
+            const currentTime = Date.now();
+            if (lastReadTime) {
+                const readTime = currentTime - lastReadTime;
+                readTimes.push(readTime);
+                if (readTimes.length > MAX_READ_TIMES) {
+                    readTimes.shift(); // Remove oldest read time
                 }
-                lastReadTime = currentTime;
-                
-                // Estimate remaining time
-                const remainingTime = estimateRemainingTime();
-                
-                // Display current chunk, total chunks, and estimated time
-                statusMessage.textContent = `File: ${fileInfo ? fileInfo.filename : 'Unknown'}, Chunk: ${chunkIndex}/${totalChunks}, Estimated time: ${remainingTime}`;
-                
-                if (Object.keys(chunks).length === totalChunks) {
-                    assembleFile(); // All chunks received, assemble the file
-                }
+            }
+            lastReadTime = currentTime;
+            
+            // Estimate remaining time
+            const remainingTime = estimateRemainingTime();
+            
+            // Display current chunk, total chunks, and estimated time
+            statusMessage.textContent = `File: ${fileInfo ? fileInfo.filename : 'Unknown'}, Chunk: ${chunkIndex}/${totalChunks}, Estimated time: ${remainingTime}`;
+            
+            if (Object.keys(chunks).length === totalChunks) {
+                console.log("All chunks received, assembling file...");
+                console.log("Chunks:", Object.keys(chunks).sort((a, b) => parseInt(a) - parseInt(b)));
+                assembleFile(); // All chunks received, assemble the file
             }
         }
     } catch (err) {
         console.error("Error processing QR code:", err);
-        errorMessage.textContent = "Invalid QR code data.";
+        // Only show error if file is not assembled
+        if (!fileAssembled) {
+            errorMessage.textContent = "Invalid QR code data.";
+        }
     }
 }
 
@@ -175,6 +201,11 @@ function updateProgress() {
 
 // Function to assemble file from chunks
 function assembleFile() {
+    // Prevent multiple assembly attempts
+    if (fileAssembled) {
+        return;
+    }
+    
     const missingChunkIndices = [];
     for (let i = 1; i <= totalChunks; i++) {
         if (!chunks[i]) {
@@ -191,19 +222,74 @@ function assembleFile() {
         }
     } else {
         // All chunks are present, assemble the file
-        const base64Data = Object.values(chunks).join('');
-        const binaryData = atob(base64Data);
-        const uint8Array = new Uint8Array(binaryData.length);
-        for (let i = 0; i < binaryData.length; i++) {
-            uint8Array[i] = binaryData.charCodeAt(i);
+        try {
+            console.log("Assembling file with", Object.keys(chunks).length, "chunks");
+            
+            // Assemble chunks by reconstructing binary data directly
+            const availableKeys = Object.keys(chunks).map(k => parseInt(k)).sort((a, b) => a - b);
+            console.log("Available chunk keys:", availableKeys);
+            console.log("Expected chunks: 1 to", totalChunks);
+            
+            // Since each chunk was base64 encoded separately, we need to decode each chunk
+            // back to binary data, then combine the binary data
+            const binaryChunks = [];
+            let totalBinaryLength = 0;
+            
+            for (let i = 1; i <= totalChunks; i++) {
+                if (chunks[i]) {
+                    try {
+                        // Decode each chunk's base64 back to binary
+                        const chunkBase64 = chunks[i];
+                        const chunkBinary = atob(chunkBase64);
+                        binaryChunks.push(chunkBinary);
+                        totalBinaryLength += chunkBinary.length;
+                        
+                        console.log(`Chunk ${i}:`, {
+                            base64Length: chunkBase64.length,
+                            binaryLength: chunkBinary.length,
+                            preview: chunkBinary.substring(0, Math.min(20, chunkBinary.length)).split('').map(c => c.charCodeAt(0))
+                        });
+                    } catch (chunkDecodeError) {
+                        console.error(`Error decoding chunk ${i}:`, chunkDecodeError);
+                        throw new Error(`Failed to decode chunk ${i}`);
+                    }
+                } else {
+                    throw new Error(`Missing chunk ${i}`);
+                }
+            }
+            
+            console.log("Total binary length:", totalBinaryLength);
+            
+            // Combine all binary chunks into one Uint8Array
+            const uint8Array = new Uint8Array(totalBinaryLength);
+            let offset = 0;
+            
+            for (let i = 0; i < binaryChunks.length; i++) {
+                const chunkBinary = binaryChunks[i];
+                for (let j = 0; j < chunkBinary.length; j++) {
+                    uint8Array[offset + j] = chunkBinary.charCodeAt(j);
+                }
+                offset += chunkBinary.length;
+            }
+            
+            // Convert back to text to verify
+            const decoder = new TextDecoder('utf-8');
+            const decodedText = decoder.decode(uint8Array.slice(0, Math.min(200, uint8Array.length)));
+            console.log("Decoded text preview:", decodedText);
+            console.log("First 20 bytes as numbers:", Array.from(uint8Array.slice(0, 20)));
+            const blob = new Blob([uint8Array]);
+            const url = URL.createObjectURL(blob);
+            downloadLink.href = url;
+            downloadLink.download = fileInfo.filename;
+            downloadLink.style.display = 'block';
+            statusMessage.textContent = "File assembly complete. Click the download link to save the file.";
+            fileAssembled = true; // Mark file as assembled
+            console.log("File assembled successfully:", fileInfo.filename);
+            stopScanning();
+        } catch (error) {
+            console.error("Error assembling file:", error);
+            errorMessage.textContent = `Error assembling file: ${error.message}. Please try scanning again.`;
         }
-        const blob = new Blob([uint8Array]);
-        const url = URL.createObjectURL(blob);
-        downloadLink.href = url;
-        downloadLink.download = fileInfo.filename;
-        downloadLink.style.display = 'block';
-        statusMessage.textContent = "File assembly complete. Click the download link to save the file.";
-        stopScanning();
     }
 }
 
